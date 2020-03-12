@@ -6,7 +6,7 @@ from multiprocessing import Pool, cpu_count
 from utils.paths import Paths
 import pickle
 import argparse
-from utils.text.recipes import ljspeech
+from utils.text.recipes import ljspeech, databaker
 from utils.files import get_files
 from pathlib import Path
 
@@ -23,6 +23,7 @@ parser.add_argument('--path', '-p', help='directly point to dataset path (overri
 parser.add_argument('--extension', '-e', metavar='EXT', default='.wav', help='file extension to search for in dataset folder')
 parser.add_argument('--num_workers', '-w', metavar='N', type=valid_n_workers, default=cpu_count()-1, help='The number of worker threads to use for preprocessing')
 parser.add_argument('--hp_file', metavar='FILE', default='hparams.py', help='The file to use for the hyperparameters')
+parser.add_argument('--dataset', '-d', metavar='DATASET', default='databaker', help='The dataset, currently supports ljspeech and databaker')
 args = parser.parse_args()
 
 hp.configure(args.hp_file)  # Load hparams from file
@@ -66,31 +67,38 @@ if len(wav_files) == 0:
     print('or use the --path option.\n')
 
 else:
-    text_dict = ljspeech(path)
-    with open(paths.data/'text_dict.pkl', 'wb') as f:
-        pickle.dump(text_dict, f)
+    text_dict = {}
+    if args.dataset == 'ljspeech':
+        text_dict = ljspeech(path)
+    if args.dataset == 'databaker':
+        text_dict = databaker(path)
+    if len(text_dict) == 0:
+        print('Please specify dataset by --dataset option.\n')
+    else:
+        with open(paths.data/'text_dict.pkl', 'wb') as f:
+            pickle.dump(text_dict, f)
 
-    n_workers = max(1, args.num_workers)
+        n_workers = max(1, args.num_workers)
 
-    simple_table([
-        ('Sample Rate', hp.sample_rate),
-        ('Bit Depth', hp.bits),
-        ('Mu Law', hp.mu_law),
-        ('Hop Length', hp.hop_length),
-        ('CPU Usage', f'{n_workers}/{cpu_count()}')
-    ])
+        simple_table([
+            ('Sample Rate', hp.sample_rate),
+            ('Bit Depth', hp.bits),
+            ('Mu Law', hp.mu_law),
+            ('Hop Length', hp.hop_length),
+            ('CPU Usage', f'{n_workers}/{cpu_count()}')
+        ])
 
-    pool = Pool(processes=n_workers)
-    dataset = []
+        pool = Pool(processes=n_workers)
+        dataset = []
 
-    for i, (item_id, length) in enumerate(pool.imap_unordered(process_wav, wav_files), 1):
-        if item_id in text_dict:
-            dataset += [(item_id, length)]
-        bar = progbar(i, len(wav_files))
-        message = f'{bar} {i}/{len(wav_files)} '
-        stream(message)
+        for i, (item_id, length) in enumerate(pool.imap_unordered(process_wav, wav_files), 1):
+            if item_id in text_dict:
+                dataset += [(item_id, length)]
+            bar = progbar(i, len(wav_files))
+            message = f'{bar} {i}/{len(wav_files)} '
+            stream(message)
 
-    with open(paths.data/'dataset.pkl', 'wb') as f:
-        pickle.dump(dataset, f)
+        with open(paths.data/'dataset.pkl', 'wb') as f:
+            pickle.dump(dataset, f)
 
-    print('\n\nCompleted. Ready to run "python train_tacotron.py" or "python train_wavernn.py". \n')
+        print('\n\nCompleted. Ready to run "python train_tacotron.py" or "python train_wavernn.py". \n')

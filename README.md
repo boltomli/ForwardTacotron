@@ -42,8 +42,12 @@ pip install -r requirements.txt
 ## 🚀 Training your own Model
 
 (1) Download and preprocess the [LJSpeech](https://keithito.com/LJ-Speech-Dataset/) dataset:
- ```
-python preprocess.py --path /path/to/ljspeech
+```
+python preprocess.py --path /path/to/ljspeech --dataset ljspeech
+```
+Default to Chinese [databaker 标贝科技中文标准女声](https://www.data-baker.com/open_source.html) dataset, download and uncompress to a folder:
+```
+python preprocess.py --path /path/to/databaker --dataset databaker
 ```
 (2) Train Tacotron with:
 ```
