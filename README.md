@@ -64,10 +64,12 @@ python train_forward.py
 (5) Generate Sentences with Griffin-Lim vocoder:
 ```
 python gen_forward.py --alpha 1 --input_text "this is whatever you want it to be" griffinlim
+python gen_forward.py --alpha 1 --force_g2p --input_text "汉字输入转换为 pin1 yin1 和训练数据保持一致" gl
 ```
 As in the original repo you can also use a trained WaveRNN vocoder:
 ```
 python gen_forward.py --input_text "this is whatever you want it to be" wavernn
+python gen_forward.py --alpha 1 --force_g2p --input_text "汉字输入转换为 pin1 yin1 和训练数据保持一致" wr
 ```
 ____
 

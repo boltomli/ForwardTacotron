@@ -10,6 +10,7 @@ from utils.text import text_to_sequence
 from utils.display import simple_table
 from utils.dsp import reconstruct_waveform, save_wav
 import numpy as np
+from g2pM import G2pM
 
 if __name__ == '__main__':
 
@@ -22,6 +23,7 @@ if __name__ == '__main__':
     parser.add_argument('--hp_file', metavar='FILE', default='hparams.py', help='The file to use for the hyperparameters')
     parser.add_argument('--alpha', type=float, default=1., help='Parameter for controlling length regulator for speedup '
                                                                 'or slow-down of generated speech, e.g. alpha=2.0 is double-time')
+    parser.add_argument('--force_g2p', action='store_true', help='Forces grapheme to phoneme conversion')
     parser.set_defaults(input_text=None)
     parser.set_defaults(weights_path=None)
 
@@ -111,10 +113,21 @@ if __name__ == '__main__':
     tts_model.load(tts_load_path)
 
     if input_text:
-        inputs = [text_to_sequence(input_text.strip(), hp.tts_cleaner_names)]
+        text = input_text.strip()
+        if args.force_g2p:
+            model = G2pM()
+            text = ' '.join(model(text))
+        inputs = [text_to_sequence(text, hp.tts_cleaner_names)]
     else:
         with open('sentences.txt') as f:
-            inputs = [text_to_sequence(l.strip(), hp.tts_cleaner_names) for l in f]
+            text = []
+            for l in f:
+                if args.force_g2p:
+                    model = G2pM()
+                    text.append(' '.join(model(l.strip())))
+                else:
+                    text.append(l.strip())
+            inputs = [text_to_sequence(t, hp.tts_cleaner_names) for t in text]
 
     if args.vocoder == 'wavernn':
         voc_k = voc_model.get_step() // 1000
