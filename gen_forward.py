@@ -3,14 +3,13 @@ import torch
 from models.fatchord_version import WaveRNN
 from models.forward_tacotron import ForwardTacotron
 from utils import hparams as hp
-from utils.text.symbols import symbols
+from utils.text.symbols import phonemes
 from utils.paths import Paths
 import argparse
-from utils.text import text_to_sequence
+from utils.text import text_to_sequence, clean_text
 from utils.display import simple_table
 from utils.dsp import reconstruct_waveform, save_wav
 import numpy as np
-from g2pM import G2pM
 
 if __name__ == '__main__':
 
@@ -23,7 +22,6 @@ if __name__ == '__main__':
     parser.add_argument('--hp_file', metavar='FILE', default='hparams.py', help='The file to use for the hyperparameters')
     parser.add_argument('--alpha', type=float, default=1., help='Parameter for controlling length regulator for speedup '
                                                                 'or slow-down of generated speech, e.g. alpha=2.0 is double-time')
-    parser.add_argument('--force_g2p', action='store_true', help='Forces grapheme to phoneme conversion')
     parser.set_defaults(input_text=None)
     parser.set_defaults(weights_path=None)
 
@@ -97,9 +95,10 @@ if __name__ == '__main__':
 
     print('\nInitialising Forward TTS Model...\n')
     tts_model = ForwardTacotron(embed_dims=hp.forward_embed_dims,
-                                num_chars=len(symbols),
+                                num_chars=len(phonemes),
                                 durpred_rnn_dims=hp.forward_durpred_rnn_dims,
                                 durpred_conv_dims=hp.forward_durpred_conv_dims,
+                                durpred_dropout=hp.forward_durpred_dropout,
                                 rnn_dim=hp.forward_rnn_dims,
                                 postnet_k=hp.forward_postnet_K,
                                 postnet_dims=hp.forward_postnet_dims,
@@ -113,21 +112,12 @@ if __name__ == '__main__':
     tts_model.load(tts_load_path)
 
     if input_text:
-        text = input_text.strip()
-        if args.force_g2p:
-            model = G2pM()
-            text = ' '.join(model(text))
-        inputs = [text_to_sequence(text, hp.tts_cleaner_names)]
+        text = clean_text(input_text.strip())
+        inputs = [text_to_sequence(text)]
     else:
         with open('sentences.txt') as f:
-            text = []
-            for l in f:
-                if args.force_g2p:
-                    model = G2pM()
-                    text.append(' '.join(model(l.strip())))
-                else:
-                    text.append(l.strip())
-            inputs = [text_to_sequence(t, hp.tts_cleaner_names) for t in text]
+            inputs = [clean_text(l.strip()) for l in f]
+        inputs = [text_to_sequence(t) for t in inputs]
 
     if args.vocoder == 'wavernn':
         voc_k = voc_model.get_step() // 1000
@@ -149,7 +139,7 @@ if __name__ == '__main__':
     for i, x in enumerate(inputs, 1):
 
         print(f'\n| Generating {i}/{len(inputs)}')
-        m = tts_model.generate(x, alpha=args.alpha)
+        _, m, _ = tts_model.generate(x, alpha=args.alpha)
 
         # Fix mel spectrogram scaling to be from 0 to 1
         m = (m + 4) / 8
@@ -165,7 +155,7 @@ if __name__ == '__main__':
         if input_text:
             save_path = paths.forward_output/f'{input_text[:10]}_{args.alpha}_{v_type}_{tts_k}k.wav'
         else:
-            save_path = paths.forward_output/f'{i}_{v_type}_{tts_k}k.wav'
+            save_path = paths.forward_output/f'{i}_{v_type}_{tts_k}ko.wav'
 
         if args.vocoder == 'wavernn':
             m = torch.tensor(m).unsqueeze(0)

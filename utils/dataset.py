@@ -1,9 +1,8 @@
-import pickle
-import torch
 from torch.utils.data.sampler import Sampler
 from torch.utils.data import Dataset, DataLoader
 from utils.dsp import *
 from utils import hparams as hp
+from utils.files import unpickle_binary
 from utils.text import text_to_sequence
 from pathlib import Path
 import random
@@ -32,20 +31,13 @@ class VocoderDataset(Dataset):
 
 
 def get_vocoder_datasets(path: Path, batch_size, train_gta):
-
-    with open(path/'dataset.pkl', 'rb') as f:
-        dataset = pickle.load(f)
-
-    dataset_ids = [x[0] for x in dataset]
-
-    random.seed(1234)
-    random.shuffle(dataset_ids)
-
-    test_ids = dataset_ids[-hp.voc_test_samples:]
-    train_ids = dataset_ids[:-hp.voc_test_samples]
+    train_data = unpickle_binary(path/'train_dataset.pkl')
+    val_data = unpickle_binary(path/'val_dataset.pkl')
+    train_ids, train_lens = filter_max_len(train_data)
+    val_ids, val_lens = filter_max_len(val_data)
 
     train_dataset = VocoderDataset(path, train_ids, train_gta)
-    test_dataset = VocoderDataset(path, test_ids, train_gta)
+    val_dataset = VocoderDataset(path, val_ids, train_gta)
 
     train_set = DataLoader(train_dataset,
                            collate_fn=collate_vocoder,
@@ -54,13 +46,27 @@ def get_vocoder_datasets(path: Path, batch_size, train_gta):
                            shuffle=True,
                            pin_memory=True)
 
-    test_set = DataLoader(test_dataset,
-                          batch_size=1,
-                          num_workers=1,
-                          shuffle=False,
-                          pin_memory=True)
+    val_set = DataLoader(val_dataset,
+                         collate_fn=collate_vocoder,
+                         batch_size=batch_size,
+                         num_workers=1,
+                         shuffle=False,
+                         pin_memory=True)
 
-    return train_set, test_set
+    np.random.seed(42)  # fix numpy seed to obtain the same val set every time, I know its hacky
+    val_set = [b for b in val_set]
+    np.random.seed()
+
+    val_set_samples = DataLoader(val_dataset,
+                                 batch_size=1,
+                                 num_workers=1,
+                                 shuffle=False,
+                                 pin_memory=True)
+
+    val_set_samples = [s for i, s in enumerate(val_set_samples)
+                       if i < hp.voc_gen_num_samples]
+
+    return train_set, val_set, val_set_samples
 
 
 def collate_vocoder(batch):
@@ -97,60 +103,84 @@ def collate_vocoder(batch):
 ###################################################################################
 
 
-def get_tts_datasets(path: Path, batch_size, r, alignments=False):
+def get_tts_datasets(path: Path, batch_size, r, model_type='tacotron'):
+    train_data = unpickle_binary(path/'train_dataset.pkl')
+    val_data = unpickle_binary(path/'val_dataset.pkl')
+    train_ids, train_lens = filter_max_len(train_data)
+    val_ids, val_lens = filter_max_len(val_data)
+    text_dict = unpickle_binary(path/'text_dict.pkl')
+    if model_type == 'tacotron':
+        train_dataset = TacoDataset(path, train_ids, text_dict)
+        val_dataset = TacoDataset(path, val_ids, text_dict)
+    elif model_type == 'forward':
+        train_dataset = ForwardDataset(path, train_ids, text_dict)
+        val_dataset = ForwardDataset(path, val_ids, text_dict)
+    else:
+        raise ValueError(f'Unknown model: {model_type}, must be either [tacotron, forward]!')
 
-    with open(path/'dataset.pkl', 'rb') as f:
-        dataset = pickle.load(f)
-
-    dataset_ids = []
-    mel_lengths = []
-
-    for (item_id, len) in dataset:
-        if len <= hp.tts_max_mel_len:
-            dataset_ids += [item_id]
-            mel_lengths += [len]
-
-    with open(path/'text_dict.pkl', 'rb') as f:
-        text_dict = pickle.load(f)
-
-    train_dataset = TTSDataset(path, dataset_ids, text_dict, alignments=alignments)
-
-    sampler = BinnedLengthSampler(mel_lengths, batch_size, batch_size * 3)
+    train_sampler = BinnedLengthSampler(train_lens, batch_size, batch_size * 3)
 
     train_set = DataLoader(train_dataset,
                            collate_fn=lambda batch: collate_tts(batch, r),
                            batch_size=batch_size,
-                           sampler=sampler,
+                           sampler=train_sampler,
                            num_workers=1,
                            pin_memory=True)
 
-    longest = mel_lengths.index(max(mel_lengths))
+    val_set = DataLoader(val_dataset,
+                         collate_fn=lambda batch: collate_tts(batch, r),
+                         batch_size=batch_size,
+                         sampler=None,
+                         num_workers=1,
+                         shuffle=False,
+                         pin_memory=True)
 
-    # Used to evaluate attention during training process
-    attn_example = dataset_ids[longest]
-
-    # print(attn_example)
-    return train_set, attn_example
+    return train_set, val_set
 
 
-class TTSDataset(Dataset):
+def filter_max_len(dataset):
+    dataset_ids = []
+    mel_lengths = []
+    for item_id, mel_len in dataset:
+        if mel_len <= hp.tts_max_mel_len:
+            dataset_ids += [item_id]
+            mel_lengths += [mel_len]
+    return dataset_ids, mel_lengths
+    
 
-    def __init__(self, path: Path, dataset_ids, text_dict, alignments=False):
+class TacoDataset(Dataset):
+
+    def __init__(self, path: Path, dataset_ids, text_dict):
         self.path = path
         self.metadata = dataset_ids
         self.text_dict = text_dict
-        self.alignments = alignments
 
     def __getitem__(self, index):
         item_id = self.metadata[index]
-        x = text_to_sequence(self.text_dict[item_id], hp.tts_cleaner_names)
+        text = self.text_dict[item_id]
+        x = text_to_sequence(text)
         mel = np.load(self.path/'mel'/f'{item_id}.npy')
         mel_len = mel.shape[-1]
-        if self.alignments:
-            dur = np.load(self.path/'alg'/f'{item_id}.npy')
-        else:
-            # dummy durations to simplify collate func
-            dur = np.zeros((mel.shape[0], 1))
+        return x, mel, item_id, mel_len
+
+    def __len__(self):
+        return len(self.metadata)
+
+
+class ForwardDataset(Dataset):
+
+    def __init__(self, path: Path, dataset_ids, text_dict):
+        self.path = path
+        self.metadata = dataset_ids
+        self.text_dict = text_dict
+
+    def __getitem__(self, index):
+        item_id = self.metadata[index]
+        text = self.text_dict[item_id]
+        x = text_to_sequence(text)
+        mel = np.load(self.path/'mel'/f'{item_id}.npy')
+        mel_len = mel.shape[-1]
+        dur = np.load(self.path/'alg'/f'{item_id}.npy')
         return x, mel, item_id, mel_len, dur
 
     def __len__(self):
@@ -165,34 +195,31 @@ def pad2d(x, max_len):
 
 
 def collate_tts(batch, r):
-
     x_lens = [len(x[0]) for x in batch]
     max_x_len = max(x_lens)
-
     chars = [pad1d(x[0], max_x_len) for x in batch]
     chars = np.stack(chars)
-
     spec_lens = [x[1].shape[-1] for x in batch]
     max_spec_len = max(spec_lens) + 1
     if max_spec_len % r != 0:
         max_spec_len += r - max_spec_len % r
-
     mel = [pad2d(x[1], max_spec_len) for x in batch]
     mel = np.stack(mel)
-
-    dur = [pad1d(x[4][:max_x_len], max_x_len) for x in batch]
-    dur = np.stack(dur)
-
     ids = [x[2] for x in batch]
     mel_lens = [x[3] for x in batch]
-
+    mel_lens = torch.tensor(mel_lens)
     chars = torch.tensor(chars).long()
     mel = torch.tensor(mel)
-    dur = torch.tensor(dur).float()
-
     # scale spectrograms to -4 <--> 4
     mel = (mel * 8.) - 4.
-    return chars, mel, ids, mel_lens, dur
+    # additional durations for forward
+    if len(batch[0]) > 4:
+        dur = [pad1d(x[4][:max_x_len], max_x_len) for x in batch]
+        dur = np.stack(dur)
+        dur = torch.tensor(dur)
+        return chars, mel, ids, mel_lens, dur
+    else:
+        return chars, mel, ids, mel_lens
 
 
 class BinnedLengthSampler(Sampler):

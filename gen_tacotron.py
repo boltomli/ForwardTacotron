@@ -1,11 +1,11 @@
 import torch
 from models.fatchord_version import WaveRNN
 from utils import hparams as hp
-from utils.text.symbols import symbols
+from utils.text.symbols import phonemes
 from utils.paths import Paths
 from models.tacotron import Tacotron
 import argparse
-from utils.text import text_to_sequence
+from utils.text import text_to_sequence, clean_text
 from utils.display import save_attention, simple_table
 from utils.dsp import reconstruct_waveform, save_wav
 import numpy as np
@@ -95,7 +95,7 @@ if __name__ == '__main__':
 
     # Instantiate Tacotron Model
     tts_model = Tacotron(embed_dims=hp.tts_embed_dims,
-                         num_chars=len(symbols),
+                         num_chars=len(phonemes),
                          encoder_dims=hp.tts_encoder_dims,
                          decoder_dims=hp.tts_decoder_dims,
                          n_mels=hp.num_mels,
@@ -112,10 +112,12 @@ if __name__ == '__main__':
     tts_model.load(tts_load_path)
 
     if input_text:
-        inputs = [text_to_sequence(input_text.strip(), hp.tts_cleaner_names)]
+        input_text = clean_text(input_text.strip())
+        inputs = [text_to_sequence(input_text)]
     else:
         with open('sentences.txt') as f:
-            inputs = [text_to_sequence(l.strip(), hp.tts_cleaner_names) for l in f]
+            inputs = [clean_text(l.strip()) for l in f]
+            inputs = [text_to_sequence(t) for t in inputs]
 
     if args.vocoder == 'wavernn':
         voc_k = voc_model.get_step() // 1000
