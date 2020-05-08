@@ -7,7 +7,7 @@ data_path = 'data/'
 
 # model ids are separate - that way you can use a new tts with an old wavernn and vice versa
 # NB: expect undefined behaviour if models were trained on different DSP settings
-voc_model_id = 'databaker_mol'
+voc_model_id = 'databaker_raw'
 tts_model_id = 'databaker_tts'
 
 # set this to True if you are only interested in WaveRNN
@@ -31,11 +31,16 @@ mu_law = True                       # Recommended to suppress noise if using raw
 peak_norm = False                   # Normalise to the peak of each wav file
 
 
+# GENERAL TRAINING ----------------------------------------------------------------------------------------------------------#
+
+seed = 42
+n_val = 200                         # num validatino samples
+
 # WAVERNN / VOCODER ------------------------------------------------------------------------------------------------#
 
 
 # Model Hparams
-voc_mode = 'MOL'                    # either 'RAW' (softmax on raw bits) or 'MOL' (sample from mixture of logistics)
+voc_mode = 'RAW'                    # either 'RAW' (softmax on raw bits) or 'MOL' (sample from mixture of logistics)
 voc_upsample_factors = (5, 5, 11)   # NB - this needs to correctly factorise hop_length
 voc_rnn_dims = 512
 voc_fc_dims = 512
@@ -44,12 +49,14 @@ voc_res_out_dims = 128
 voc_res_blocks = 10
 
 # Training
-voc_batch_size = 32
-voc_lr = 1e-4
+
+voc_schedule = [(1e-4,  300_000,  32),        # progressive training schedule
+                (2e-5,  2_000_000,  32)]      # (lr, step, batch_size)
+
 voc_checkpoint_every = 25_000
-voc_gen_at_checkpoint = 5           # number of samples to generate at each checkpoint
-voc_total_steps = 1_000_000         # Total number of training steps
-voc_test_samples = 50               # How many unseen samples to put aside for testing
+voc_gen_samples_every = 5000        # how often to generate samples for cherry-picking models
+voc_gen_num_samples = 3             # number of samples to generate for cherry-picking models
+voc_keep_top_k = 3                  # how many top performing models to keep
 voc_pad = 2                         # this will pad the input so that the resnet can 'see' wider than input length
 voc_seq_len = hop_length * 5        # must be a multiple of hop_length
 voc_clip_grad_norm = 4              # set to None if no gradient clipping needed
@@ -73,7 +80,8 @@ tts_lstm_dims = 512
 tts_postnet_K = 8
 tts_num_highways = 4
 tts_dropout = 0.5
-tts_cleaner_names = ['basic_cleaners']
+language = 'zh'
+tts_cleaner_name = 'basic_cleaners'
 tts_stop_threshold = -3.4           # Value below which audio generation ends.
                                     # For example, for a range of [-4, 4], this
                                     # will terminate the sequence at the first
@@ -81,14 +89,15 @@ tts_stop_threshold = -3.4           # Value below which audio generation ends.
 
 # Training
 
-tts_schedule = [(7,  1e-3,  10_000,  32),   # progressive training schedule
-                (5,  1e-4, 100_000,  32),   # (r, lr, step, batch_size)
-                (1,  1e-4, 180_000,  16),
-                (1,  1e-4, 350_000,  8)]
+tts_schedule = [(10,  1e-3,  10_000,  32),   # progressive training schedule
+                (5,  1e-4, 20_000,  16),   # (r, lr, step, batch_size)
+                (2,  1e-4, 30_000,  8),
+                (1,  1e-4, 50_000,  8)]
 
 tts_max_mel_len = 1250              # if you have a couple of extremely long spectrograms you might want to use this
 tts_clip_grad_norm = 1.0            # clips the gradient norm to prevent explosion - set to None if not needed
 tts_checkpoint_every = 10_000        # checkpoints the model every X steps
+tts_plot_every = 1000
 
 # ------------------------------------------------------------------------------------------------------------------#
 
@@ -102,12 +111,12 @@ forward_prenet_dims = 256
 forward_postnet_dims = 256
 forward_durpred_conv_dims = 256
 forward_durpred_rnn_dims = 64
+forward_durpred_dropout = 0.5
 forward_prenet_K = 16
 forward_postnet_K = 8
 forward_rnn_dims = 512
 forward_num_highways = 4
-forward_dropout = 0.5
-forward_cleaner_names = ['basic_cleaners']
+forward_dropout = 0.1
 
 # Training
 
@@ -117,6 +126,7 @@ forward_schedule = [(1e-3, 10_000,  32),    # progressive training schedule
 forward_max_mel_len = 1250              # if you have a couple of extremely long spectrograms you might want to use this
 forward_clip_grad_norm = 1.0            # clips the gradient norm to prevent explosion - set to None if not needed
 forward_checkpoint_every = 10_000        # checkpoints the model every X steps
+forward_plot_every = 1000
 
 # ------------------------------------------------------------------------------------------------------------------#
 

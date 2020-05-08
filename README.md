@@ -18,6 +18,11 @@ The model has following advantages:
 does not use any attention. Hence, the required memory grows linearly with text size, which makes it possible to synthesize large articles at once.
 
 
+## UPDATE (29.04.2020)
+1. Models now use phonemes, which improves audio quality and reduces pronunciation errors.
+2. Training is now running on a train / val split and can be monitored with tensorboard (see example at the bottom).
+3. Additional monitoring for WaveRNN that helps to cherry-pick the model.
+
 ## 🔈 Samples
 
 [Can be found here.](https://as-ideas.github.io/ForwardTacotron/)
@@ -32,7 +37,11 @@ provided by the WaveRNN repo. Both models are commited in the pretrained folder.
 Make sure you have:
 
 * Python >= 3.6
-* [PyTorch 1 with CUDA](https://pytorch.org/)
+
+Install espeak as phonemizer backend (for macOS use brew):
+```
+sudo apt-get install espeak
+```
 
 Then install the rest with pip:
 ```
@@ -63,13 +72,11 @@ python train_forward.py
 ```
 (5) Generate Sentences with Griffin-Lim vocoder:
 ```
-python gen_forward.py --alpha 1 --input_text "this is whatever you want it to be" griffinlim
-python gen_forward.py --alpha 1 --force_g2p --input_text "汉字输入转换为 pin1 yin1 和训练数据保持一致" gl
+python gen_forward.py --alpha 1 --input_text "汉字输入转换为 pin1 yin1 和训练数据保持一致" griffinlim
 ```
 As in the original repo you can also use a trained WaveRNN vocoder:
 ```
-python gen_forward.py --input_text "this is whatever you want it to be" wavernn
-python gen_forward.py --alpha 1 --force_g2p --input_text "汉字输入转换为 pin1 yin1 和训练数据保持一致" wr
+python gen_forward.py --input_text "汉字输入转换为 pin1 yin1 和训练数据保持一致" wavernn
 ```
 ____
 

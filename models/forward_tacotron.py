@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Union
 
+import numpy as np
+
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
@@ -14,35 +16,33 @@ class LengthRegulator(nn.Module):
         super().__init__()
 
     def forward(self, x, dur):
-        output = []
-        for x_i, dur_i in zip(x, dur):
-            expanded = self.expand(x_i, dur_i)
-            output.append(expanded)
-        output = self.pad(output)
-        return output
+        return self.expand(x, dur)
+     
+    @staticmethod
+    def build_index(duration, x):
+        duration[duration < 0] = 0
+        tot_duration = duration.cumsum(1).detach().cpu().numpy().astype('int')
+        max_duration = int(tot_duration.max().item())
+        index = np.zeros([x.shape[0], max_duration, x.shape[2]], dtype='long')
+
+        for i in range(tot_duration.shape[0]):
+            pos = 0
+            for j in range(tot_duration.shape[1]):
+                pos1 = tot_duration[i, j]
+                index[i, pos:pos1, :] = j
+                pos = pos1
+            index[i, pos:, :] = j
+        return torch.LongTensor(index).to(duration.device)
 
     def expand(self, x, dur):
-        output = []
-        for i, frame in enumerate(x):
-            expanded_len = int(dur[i] + 0.5)
-            expanded = frame.expand(expanded_len, -1)
-            output.append(expanded)
-        output = torch.cat(output, 0)
-        return output
-
-    def pad(self, x):
-        output = []
-        max_len = max([x[i].size(0) for i in range(len(x))])
-        for i, seq in enumerate(x):
-            padded = F.pad(seq, [0, 0, 0, max_len - seq.size(0)], 'constant', 0.0)
-            output.append(padded)
-        output = torch.stack(output)
-        return output
+        idx = self.build_index(dur, x)
+        y = torch.gather(x, 1, idx)
+        return y
 
 
 class DurationPredictor(nn.Module):
 
-    def __init__(self, in_dims, conv_dims=256, rnn_dims=64):
+    def __init__(self, in_dims, conv_dims=256, rnn_dims=64, dropout=0.5):
         super().__init__()
         self.convs = torch.nn.ModuleList([
             BatchNormConv(in_dims, conv_dims, 5, activation=torch.relu),
@@ -51,12 +51,13 @@ class DurationPredictor(nn.Module):
         ])
         self.rnn = nn.GRU(conv_dims, rnn_dims, batch_first=True, bidirectional=True)
         self.lin = nn.Linear(2 * rnn_dims, 1)
+        self.dropout = dropout
 
     def forward(self, x, alpha=1.0):
         x = x.transpose(1, 2)
         for conv in self.convs:
             x = conv(x)
-            x = F.dropout(x, p=0.1, training=self.training)
+            x = F.dropout(x, p=self.dropout, training=self.training)
         x = x.transpose(1, 2)
         x, _ = self.rnn(x)
         x = self.lin(x)
@@ -86,6 +87,7 @@ class ForwardTacotron(nn.Module):
                  num_chars,
                  durpred_conv_dims,
                  durpred_rnn_dims,
+                 durpred_dropout,
                  rnn_dim,
                  prenet_k,
                  prenet_dims,
@@ -101,7 +103,8 @@ class ForwardTacotron(nn.Module):
         self.lr = LengthRegulator()
         self.dur_pred = DurationPredictor(embed_dims,
                                           conv_dims=durpred_conv_dims,
-                                          rnn_dims=durpred_rnn_dims)
+                                          rnn_dims=durpred_rnn_dims,
+                                          dropout=durpred_dropout)
         self.prenet = CBHG(K=prenet_k,
                            in_channels=embed_dims,
                            channels=prenet_dims,
@@ -122,8 +125,8 @@ class ForwardTacotron(nn.Module):
         self.post_proj = nn.Linear(2 * postnet_dims, n_mels, bias=False)
 
     def forward(self, x, mel, dur):
-        self.train()
-        self.step += 1
+        if self.training:
+            self.step += 1
 
         x = self.embedding(x)
         dur_hat = self.dur_pred(x)
@@ -154,6 +157,7 @@ class ForwardTacotron(nn.Module):
 
         x = self.embedding(x)
         dur = self.dur_pred(x, alpha=alpha)
+        dur = dur.squeeze(2)
 
         x = x.transpose(1, 2)
         x = self.prenet(x)
@@ -169,9 +173,12 @@ class ForwardTacotron(nn.Module):
         x_post = self.post_proj(x_post)
         x_post = x_post.transpose(1, 2)
 
-        x_post = x_post.squeeze()
+        x, x_post, dur = x.squeeze(), x_post.squeeze(), dur.squeeze()
+        x = x.cpu().data.numpy()
         x_post = x_post.cpu().data.numpy()
-        return x_post
+        dur = dur.cpu().data.numpy()
+
+        return x, x_post, dur
 
     def pad(self, x, max_len):
         x = x[:, :, :max_len]

@@ -1,4 +1,5 @@
 import math
+import torch
 import numpy as np
 import librosa
 from utils import hparams as hp
@@ -74,6 +75,12 @@ def melspectrogram(y):
     S = amp_to_db(linear_to_mel(np.abs(D)))
     return normalize(S)
 
+def raw_melspec(y):
+    D = stft(y)
+    S = linear_to_mel(np.abs(D))
+    return S
+
+
 
 def stft(y):
     return librosa.stft(
@@ -101,6 +108,16 @@ def decode_mu_law(y, mu, from_labels=True):
     mu = mu - 1
     x = np.sign(y) / mu * ((1 + mu) ** np.abs(y) - 1)
     return x
+
+
+def rescale_mel(m):
+    m = (m + 4) / 8
+    np.clip(m, 0, 1, out=m)
+    return m
+
+
+def np_now(x: torch.Tensor): return x.detach().cpu().numpy()
+
 
 def reconstruct_waveform(mel, n_iter=32):
     """Uses Griffin-Lim phase reconstruction to convert from a normalized
