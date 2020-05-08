@@ -93,7 +93,7 @@ def to_phonemes(text):
                          preserve_punctuation=True,
                          with_stress=False,
                          njobs=1,
-                         punctuation_marks=';:,.!?¡¿—…"«»“”()',
+                         punctuation_marks=';:,.!?¡¿—…"«»“”()；：，。！？《》‘’（）、',
                          language_switch='remove-flags')
     phonemes = phonemes.replace('—', '-')
     return phonemes
